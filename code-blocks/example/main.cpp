@@ -10,5 +10,6 @@ int main() {
     easy_email.send("to_two_example@yandex.ru", u8"Робот", u8"Превед, человег!");
     std::this_thread::sleep_for(std::chrono::milliseconds(10000));
     easy_email.send("to_two_example@yandex.ru", u8"Робот", u8"Превед, человег! Ещо раз!");
+    easy_email.send(u8"Робот", u8"Превед самому себе!");
     return 0;
 }

@@ -13,17 +13,22 @@ C++ библиотека для отправки сообщений на email
 #include <thread> // только для std::this_thread::sleep_for
 
 int main() {
-    	std::cout << "Hello Email!" << std::endl;
+	std::cout << "Hello Email!" << std::endl;
 	
-    	std::string email("example@yandex.ru");
-    	std::string pass("123456");
+	std::string email("example@yandex.ru");
+	std::string pass("123456");
 	
-   	EasyEmail easy_email(email, pass);
+	EasyEmail easy_email(email, pass);
 	
-	/* отправляем два сообщения */
-    	easy_email.send("to_two_example@yandex.ru", u8"Робот", u8"Превед, человег!");
-    	std::this_thread::sleep_for(std::chrono::milliseconds(10000));
-    	easy_email.send("to_two_example@yandex.ru", u8"Робот", u8"Превед, человег! Ещо раз!");
-    	return 0;
+	/* отправляем два сообщения на почтовый ящик to_two_example@yandex.ru */
+	easy_email.send("to_two_example@yandex.ru", u8"Робот", u8"Превед, человег!");
+	std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+	easy_email.send("to_two_example@yandex.ru", u8"Робот", u8"Превед, человег! Ещо раз!");
+	
+	/* отправляем сообщение на почтовый ящик example@yandex.ru */
+	easy_email.send(u8"Робот", u8"Превед сам себе!");
+	return 0;
 }
 ```
+
+**Не забудьте про файл сертификата *curl-ca-bundle.crt*! Он должен быть в папке с программой! Или можно указать путь к другому вашему файлу сертификата через конструктор класса или параметры класса.**
