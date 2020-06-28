@@ -21,6 +21,7 @@
 					<Add directory="../../lib/curl-7.60.0-win64-mingw/include" />
 					<Add directory="../../lib/curl-7.60.0-win64-mingw/lib" />
 					<Add directory="../../lib/curl-7.60.0-win64-mingw/bin" />
+					<Add directory="../../lib/base64" />
 				</Compiler>
 				<Linker>
 					<Add option="-s" />
@@ -42,6 +43,7 @@
 					<Add directory="../../lib/curl-7.60.0-win64-mingw/include" />
 					<Add directory="../../lib/curl-7.60.0-win64-mingw/lib" />
 					<Add directory="../../lib/curl-7.60.0-win64-mingw/bin" />
+					<Add directory="../../lib/base64" />
 				</Linker>
 			</Target>
 		</Build>

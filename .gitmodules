@@ -4,3 +4,6 @@
 [submodule "lib/openssl_win64"]
 	path = lib/openssl_win64
 	url = https://github.com/NewYaroslav/openssl_win64.git
+[submodule "lib/base64"]
+	path = lib/base64
+	url = https://github.com/tkislan/base64.git
