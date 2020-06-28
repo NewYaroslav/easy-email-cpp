@@ -43,7 +43,7 @@ private:
     char error_buffer[CURL_ERROR_SIZE];  /**< Буфер для вывода ошибки при передаче */
     const int TIME_OUT = 60;            /**< Время ожидания ответа */
 
-    //char* payload_text;
+    bool is_log_visibility = false;
 
     struct upload_status  {
         size_t lines_read;
@@ -65,15 +65,118 @@ private:
         return 0;
     }
 
+    int culr_request(const std::string &toemail, struct upload_status &upload_ctx) {
+        struct curl_slist *recipients = NULL;
+        CURLcode res = CURLE_OK;
+        CURL *curl = curl_easy_init();
+        if(curl) {
+            /* Установите имя пользователя и пароль */
+            curl_easy_setopt(curl, CURLOPT_USERNAME, email.c_str());
+            curl_easy_setopt(curl, CURLOPT_PASSWORD, password.c_str());
+
+            /* Это URL вашего почтового сервера. Обратите внимание
+             * на использование smtps: // вместо smtp: //
+             * для запроса соединения на основе SSL.
+             */
+            curl_easy_setopt(curl, CURLOPT_URL, url_mailserver.c_str());
+            curl_easy_setopt(curl, CURLOPT_PORT, port);
+            curl_easy_setopt(curl, CURLOPT_CAINFO, sert_file.c_str());
+
+            /* Если вы хотите подключиться к сайту, который не использует сертификат,
+             * подписанный одним из сертификатов в вашем комплекте CA,
+             * вы можете пропустить проверку сертификата сервера.
+             * Это делает соединение ОЧЕНЬ МЕНЬШЕ БЕЗОПАСНЫМ.
+             *
+             * Если у вас есть сертификат CA для сервера, хранящийся где-то еще,
+             * чем в комплекте по умолчанию,
+             * тогда вам может пригодиться параметр CURLOPT_CAPATH.
+             */
+            if(is_skip_peer_verification) curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+
+            /* Если сайт, к которому вы подключаетесь, использует другое имя хоста,
+             * отличное от того, что они указали в полях commonName (или subjectAltName)
+             * сертификата сервера, libcurl откажется подключиться.
+             * Вы можете пропустить эту проверку,
+             * но это сделает соединение менее безопасным. */
+            if(is_skip_hostname_verification) curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+
+            /* Обратите внимание, что эта опция строго не обязательна,
+             * ее пропуск приведет к тому, что libcurl отправит команду MAIL FROM
+             * с пустыми данными отправителя.
+             * Все автоответчики должны иметь пустой обратный путь и должны быть
+             * направлены на адрес в обратном пути, который их инициировал.
+             * В противном случае они могут вызвать бесконечный цикл.
+             * См. RFC 5321 Раздел 4.5.5 для более подробной информации.
+             */
+            std::string& from = email;
+            curl_easy_setopt(curl, CURLOPT_MAIL_FROM, from.c_str());
+
+            /* Добавьте двух получателей,
+             * в данном конкретном случае они соответствуют
+             * Кому: и Cc: адресаты в заголовке,
+             * но они могут быть любыми получателями.
+             */
+            recipients = curl_slist_append(recipients, toemail.c_str());
+            curl_easy_setopt(curl, CURLOPT_MAIL_RCPT, recipients);
+
+            /* Мы используем функцию обратного вызова,
+             * чтобы указать полезную нагрузку (заголовки и тело сообщения).
+             * Вы можете просто использовать опцию CURLOPT_READDATA,
+             * чтобы указать указатель FILE для чтения.
+             */
+            curl_easy_setopt(curl, CURLOPT_READFUNCTION, payload_source);
+            curl_easy_setopt(curl, CURLOPT_READDATA, &upload_ctx);
+            curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+
+            /* Поскольку трафик будет зашифрован,
+             * очень полезно включить отладочную информацию в libcurl,
+             *  чтобы увидеть, что происходит во время передачи
+             */
+            curl_easy_setopt(curl, CURLOPT_VERBOSE, 0L);
+
+            curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, TIME_OUT); // выход через TIME_OUT сек
+
+            /* Отправить сообщение */
+            res = curl_easy_perform(curl);
+
+            /* Проверьте на ошибки */
+            if(res != CURLE_OK) {
+                if(is_log_visibility) {
+                    std::cerr << "EasyEmail"<< std::endl;
+                    std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
+                    std::cerr << "Libcurl error in send(), code:\n";
+                    std::cerr << "Error: " << error_buffer;
+                    std::cerr << std::endl << res << std::endl;
+                }
+                /* Освободить список получателей */
+                curl_slist_free_all(recipients);
+                curl_easy_cleanup(curl);
+                return res;
+            }
+
+            /* Освободить список получателей */
+            curl_slist_free_all(recipients);
+            curl_easy_cleanup(curl);
+        } else return CURL_INIT_ERROR;
+        return (int)res;
+    }
+
 public:
+
+    enum {
+        CURL_INIT_ERROR = -1,
+        INVALID_PARAMETER = -2,
+    };
 
     /// Типы параметров
     enum class TypesOptions {
-        SKIP_PEER_VERIFICATION = 0,
-        SKIP_HOSTNAME_VERFICATION = 1,
-        EMAIL = 2,
-        PASSWORD = 3,
-        MAIL_SERVER = 4,
+        LOG_VISIBILITY = 0,
+        SKIP_PEER_VERIFICATION = 1,
+        SKIP_HOSTNAME_VERFICATION = 2,
+        EMAIL = 3,
+        PASSWORD = 4,
+        MAIL_SERVER = 5,
     };
 
     /** \brief Установить параметры
@@ -87,6 +190,9 @@ public:
             break;
         case TypesOptions::SKIP_HOSTNAME_VERFICATION:
             is_skip_hostname_verification = state;
+            break;
+        case TypesOptions::LOG_VISIBILITY:
+            is_log_visibility = state;
             break;
         default:
             break;
@@ -174,7 +280,6 @@ public:
      * \return CURLE_OK в случае успеха
      */
     int send(const std::string &toemail, const std::string &theme, const std::string &msg) {
-        struct curl_slist *recipients = NULL;
         struct upload_status upload_ctx;
 
         upload_ctx.lines_read = 0;
@@ -184,101 +289,7 @@ public:
         upload_ctx.msg += "\r\n"; /* пустая строка для разделения заголовков от тела, см. RFC5322 */
         upload_ctx.msg += msg + "\r\n";
         upload_ctx.msg += "\r\n\0";
-
-        CURLcode res = CURLE_OK;
-        CURL *curl = curl_easy_init();
-        if(curl) {
-            /* Установите имя пользователя и пароль */
-            curl_easy_setopt(curl, CURLOPT_USERNAME, email.c_str());
-            curl_easy_setopt(curl, CURLOPT_PASSWORD, password.c_str());
-
-            /* Это URL вашего почтового сервера. Обратите внимание
-             * на использование smtps: // вместо smtp: //
-             * для запроса соединения на основе SSL.
-             */
-            curl_easy_setopt(curl, CURLOPT_URL, url_mailserver.c_str());
-            curl_easy_setopt(curl, CURLOPT_PORT, port);
-            curl_easy_setopt(curl, CURLOPT_CAINFO, sert_file.c_str());
-
-            /* Если вы хотите подключиться к сайту, который не использует сертификат,
-             * подписанный одним из сертификатов в вашем комплекте CA,
-             * вы можете пропустить проверку сертификата сервера.
-             * Это делает соединение ОЧЕНЬ МЕНЬШЕ БЕЗОПАСНЫМ.
-             *
-             * Если у вас есть сертификат CA для сервера, хранящийся где-то еще,
-             * чем в комплекте по умолчанию,
-             * тогда вам может пригодиться параметр CURLOPT_CAPATH.
-             */
-            if(is_skip_peer_verification) curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-
-            /* Если сайт, к которому вы подключаетесь, использует другое имя хоста,
-             * отличное от того, что они указали в полях commonName (или subjectAltName)
-             * сертификата сервера, libcurl откажется подключиться.
-             * Вы можете пропустить эту проверку,
-             * но это сделает соединение менее безопасным. */
-            if(is_skip_hostname_verification) curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-
-            /* Обратите внимание, что эта опция строго не обязательна,
-             * ее пропуск приведет к тому, что libcurl отправит команду MAIL FROM
-             * с пустыми данными отправителя.
-             * Все автоответчики должны иметь пустой обратный путь и должны быть
-             * направлены на адрес в обратном пути, который их инициировал.
-             * В противном случае они могут вызвать бесконечный цикл.
-             * См. RFC 5321 Раздел 4.5.5 для более подробной информации.
-             */
-            std::string& from = email;
-            curl_easy_setopt(curl, CURLOPT_MAIL_FROM, from.c_str());
-
-            /* Добавьте двух получателей,
-             * в данном конкретном случае они соответствуют
-             * Кому: и Cc: адресаты в заголовке,
-             * но они могут быть любыми получателями.
-             */
-            recipients = curl_slist_append(recipients, toemail.c_str());
-            curl_easy_setopt(curl, CURLOPT_MAIL_RCPT, recipients);
-
-            /* Мы используем функцию обратного вызова,
-             * чтобы указать полезную нагрузку (заголовки и тело сообщения).
-             * Вы можете просто использовать опцию CURLOPT_READDATA,
-             * чтобы указать указатель FILE для чтения.
-             */
-            curl_easy_setopt(curl, CURLOPT_READFUNCTION, payload_source);
-            curl_easy_setopt(curl, CURLOPT_READDATA, &upload_ctx);
-            curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
-
-            /* Поскольку трафик будет зашифрован,
-             * очень полезно включить отладочную информацию в libcurl,
-             *  чтобы увидеть, что происходит во время передачи
-             */
-            curl_easy_setopt(curl, CURLOPT_VERBOSE, 0L);
-
-            curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT, TIME_OUT); // выход через TIME_OUT сек
-
-            /* Отправить сообщение */
-            res = curl_easy_perform(curl);
-
-            /* Проверьте на ошибки */
-            if(res != CURLE_OK) {
-                //fprintf(stderr, "curl_easy_perform() failed: %s\n",
-                //      curl_easy_strerror(res));
-                std::cerr << "EasyEmail"<< std::endl;
-                std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
-                std::cerr << "Libcurl error in send(), code:\n";
-                std::cerr << "Error: " << error_buffer;
-                std::cerr << std::endl << res << std::endl;
-
-                /* Освободить список получателей */
-                curl_slist_free_all(recipients);
-                curl_easy_cleanup(curl);
-                return res;
-            }
-
-            /* Освободить список получателей */
-            curl_slist_free_all(recipients);
-            curl_easy_cleanup(curl);
-        }
-        return (int)res;
+        return culr_request(toemail, upload_ctx);
     }
 
     /** \brief Отправить текстовый файл на email
@@ -290,7 +301,7 @@ public:
      * \return CURLE_OK в случае успеха
      */
     int send(const std::string &toemail, const std::string &theme, const std::string &msg, const std::vector<std::string> &file_name, const std::vector<std::string> &file_content) {
-        struct curl_slist *recipients = NULL;
+        if(file_name.size() != file_content.size()) return INVALID_PARAMETER;
         struct upload_status upload_ctx;
 
         upload_ctx.lines_read = 0;
@@ -329,101 +340,7 @@ public:
         upload_ctx.msg += "--AlternativeEasyEmailBoundary--\r\n";
         upload_ctx.msg += "\r\n";
         upload_ctx.msg += "--MixedEasyEmailBoundary--\r\n\0";
-
-        CURLcode res = CURLE_OK;
-        CURL *curl = curl_easy_init();
-        if(curl) {
-            /* Установите имя пользователя и пароль */
-            curl_easy_setopt(curl, CURLOPT_USERNAME, email.c_str());
-            curl_easy_setopt(curl, CURLOPT_PASSWORD, password.c_str());
-
-            /* Это URL вашего почтового сервера. Обратите внимание
-             * на использование smtps: // вместо smtp: //
-             * для запроса соединения на основе SSL.
-             */
-            curl_easy_setopt(curl, CURLOPT_URL, url_mailserver.c_str());
-            curl_easy_setopt(curl, CURLOPT_PORT, port);
-            curl_easy_setopt(curl, CURLOPT_CAINFO, sert_file.c_str());
-
-            /* Если вы хотите подключиться к сайту, который не использует сертификат,
-             * подписанный одним из сертификатов в вашем комплекте CA,
-             * вы можете пропустить проверку сертификата сервера.
-             * Это делает соединение ОЧЕНЬ МЕНЬШЕ БЕЗОПАСНЫМ.
-             *
-             * Если у вас есть сертификат CA для сервера, хранящийся где-то еще,
-             * чем в комплекте по умолчанию,
-             * тогда вам может пригодиться параметр CURLOPT_CAPATH.
-             */
-            if(is_skip_peer_verification) curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-
-            /* Если сайт, к которому вы подключаетесь, использует другое имя хоста,
-             * отличное от того, что они указали в полях commonName (или subjectAltName)
-             * сертификата сервера, libcurl откажется подключиться.
-             * Вы можете пропустить эту проверку,
-             * но это сделает соединение менее безопасным. */
-            if(is_skip_hostname_verification) curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-
-            /* Обратите внимание, что эта опция строго не обязательна,
-             * ее пропуск приведет к тому, что libcurl отправит команду MAIL FROM
-             * с пустыми данными отправителя.
-             * Все автоответчики должны иметь пустой обратный путь и должны быть
-             * направлены на адрес в обратном пути, который их инициировал.
-             * В противном случае они могут вызвать бесконечный цикл.
-             * См. RFC 5321 Раздел 4.5.5 для более подробной информации.
-             */
-            std::string& from = email;
-            curl_easy_setopt(curl, CURLOPT_MAIL_FROM, from.c_str());
-
-            /* Добавьте двух получателей,
-             * в данном конкретном случае они соответствуют
-             * Кому: и Cc: адресаты в заголовке,
-             * но они могут быть любыми получателями.
-             */
-            recipients = curl_slist_append(recipients, toemail.c_str());
-            curl_easy_setopt(curl, CURLOPT_MAIL_RCPT, recipients);
-
-            /* Мы используем функцию обратного вызова,
-             * чтобы указать полезную нагрузку (заголовки и тело сообщения).
-             * Вы можете просто использовать опцию CURLOPT_READDATA,
-             * чтобы указать указатель FILE для чтения.
-             */
-            curl_easy_setopt(curl, CURLOPT_READFUNCTION, payload_source);
-            curl_easy_setopt(curl, CURLOPT_READDATA, &upload_ctx);
-            curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
-
-            /* Поскольку трафик будет зашифрован,
-             * очень полезно включить отладочную информацию в libcurl,
-             *  чтобы увидеть, что происходит во время передачи
-             */
-            curl_easy_setopt(curl, CURLOPT_VERBOSE, 0L);
-
-            curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT, TIME_OUT); // выход через TIME_OUT сек
-
-            /* Отправить сообщение */
-            res = curl_easy_perform(curl);
-
-            /* Проверьте на ошибки */
-            if(res != CURLE_OK) {
-                //fprintf(stderr, "curl_easy_perform() failed: %s\n",
-                //      curl_easy_strerror(res));
-                std::cerr << "EasyEmail"<< std::endl;
-                std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
-                std::cerr << "Libcurl error in send(), code:\n";
-                std::cerr << "Error: " << error_buffer;
-                std::cerr << std::endl << res << std::endl;
-
-                /* Освободить список получателей */
-                curl_slist_free_all(recipients);
-                curl_easy_cleanup(curl);
-                return res;
-            }
-
-            /* Освободить список получателей */
-            curl_slist_free_all(recipients);
-            curl_easy_cleanup(curl);
-        }
-        return (int)res;
+        return culr_request(toemail, upload_ctx);
     }
 };
 
